@@ -1,0 +1,107 @@
+---
+title: "TidyTuesday - Basic EDA Functions for Examining NFL Salary"
+author: "Amanda Park"
+date: "11/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(pacman)
+
+p_load(
+       tidyverse,
+       dlookr,
+       ggplot2,
+       lazyeval,
+       update = FALSE
+)
+
+data <- readxl::read_excel("nfl_salary.xlsx")
+```
+
+## Some Functions for Exploratory Data Analysis (EDA)
+
+This is an example of checking and plotting over time the group mean of 1 variable in the dataset. 
+
+Provided is a function to make checking all variables easier, called groupedMean.
+
+```{r}
+
+groupedMean <- function(data, 
+                        group_var, 
+                        summary_var,
+                        ylab = "Salary",
+                        xlab = "Year",
+                        title = "NFL Mean Salary for") {
+  
+  #Enquote variables
+  gVar <- enquo(group_var)
+  sVar <- enquo(summary_var)
+  
+  #Format data
+  d <- data %>%
+    group_by(!!gVar) %>%
+    summarise(meanVals = mean(!!sVar, na.rm = TRUE))
+  
+  #Create basic ggplot line graph
+  p <- d %>%
+    ggplot(aes(!!gVar, meanVals)) +
+      geom_point() +
+      geom_line() +
+      xlab(xlab) +
+      ylab(ylab) +
+    ggtitle(paste(title, as_name(sVar)))
+  
+  #Create output as a list
+  output <- list(
+    "data" = d,
+    "plot" = p
+  )
+  
+  return(output)
+}
+
+groupedMean(data, year, Quarterback)
+groupedMean(data, year, Cornerback)
+
+```
+
+However, if you want to do all variables at once, you can take advantage of dlookr's describe() function after grouping your data to quickly get all the means of your data. This works well for this dataset, but generally may not for others.
+
+In this function, you can choose either to facet the ggplot based on the variables and get a bunch of small plots, or have all the values plotted on the same graph. Both are allowed as options based on whether you set facet = TRUE or FALSE in the function below.
+
+```{r groupMeansMany}
+
+groupMeanPlot <- function(data = data,
+                           groupVar = year,
+                           xlab = "Salary",
+                           ylab = "Year",
+                           facet = TRUE) {
+  #Enquote variables
+  gVar <- enquo(groupVar)
+  
+  #Create ggplot for means of the data
+  p <- data %>%
+    group_by(!!gVar) %>%
+    describe() %>%
+    ggplot(aes(x = !!gVar, y = mean)) +
+    xlab(xlab) +
+    ylab(ylab)
+  
+  if(facet == TRUE) {
+    p <- p + geom_line() + facet_wrap(.~variable)
+  }
+  else {
+    p <- p + geom_line(aes(color = variable))
+  }
+  
+  return(p)
+  
+}
+
+
+groupMeanPlot(data = data, groupVar = year, facet = FALSE)
+groupMeanPlot(data = data, groupVar = year, facet = TRUE)
+```
