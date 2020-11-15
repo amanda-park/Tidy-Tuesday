@@ -1,0 +1,79 @@
+---
+title: "TidyTuesday - Scraping Pokedex Data"
+author: "Amanda Park"
+date: "11/15/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(pacman)
+
+p_load(tidyverse,
+       rvest,
+       rversions)
+```
+
+## Scrape Data
+
+The biggest thing to know when pulling web data is knowing which part of an html file to grab. To help with this, in Chrome/Firefox right click and hit View Page Source.
+
+```{r}
+#First scrape all Pokemon names from this site
+link <- "https://pokemondb.net/pokedex/all"
+page <- read_html(link)
+
+#Find appropriate html node to access to pull Pokemon names
+pokemon <- page %>% 
+  html_nodes(".ent-name") %>% 
+  html_text() %>% 
+  unique()
+
+scrapeLink <- page %>% 
+  html_nodes(".ent-name") %>% 
+  html_attr("href") %>% 
+  unique()
+
+#Create tibble to store data
+pokedexData <- tibble(Pokemon = pokemon) %>%
+  mutate(page = paste0("https://pokemondb.net", scrapeLink))
+
+```
+
+## Grab Pokedex Entries
+
+This chunks pulls all the Pokedex entries that a Pokemon has on the website. *Note*: A for loop is not the most efficient implementation for anything ever in R, but the process only took a couple of minutes to run, since the amount of data being scraped isn't huge. 
+
+```{r}
+#Create tibble with dummy observation
+df <- tibble(Pokemon = "1", PokedexEntry = "2")
+
+#Iterate through all the Pokedex entries
+for(i in 1:nrow(pokedexData)) {
+  
+  link2 <- as.character(unlist(pokedexData[i,2]))
+  
+  mon <- read_html(link2)
+    
+  entry <- mon %>% 
+    html_nodes("td.cell-med-text") %>%
+    html_text() %>% 
+    unique()
+  
+  monName <- rep(as.character(unlist(pokedexData[i,1])), length(entry))
+  
+  bind <- bind_cols(monName, entry) %>% 
+    set_names("Pokemon", "PokedexEntry")
+  
+  df <- df %>% add_row(bind)
+}
+
+#Remove dummy observation
+df <- df[-1,]
+
+write.csv(df, "PokedexEntries.csv")
+
+```
+
+
