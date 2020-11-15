@@ -1,0 +1,367 @@
+---
+title: "Pokemon Data Analysis"
+author: "Amanda Park"
+date: "March 25, 2019"
+runtime: shiny
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## What is Pokemon? 
+
+Pokemon is a video game series that involves turn-based RPG combat between monsters you capture called Pokemon. Each mainline game in the series takes place in a different region, where its own unique set of Pokemon are introduced. The Pokemon introduced in these new sets are denoted as a being a part of a generation of Pokemon (numbered in order of the game's releases). So far, there have been seven generations in the series. Each Pokemon is a distinct fighter with individual fighting statistics. You play as a Pokemon trainer, and your goal is to build the best fighting team to become the best trainer. This will entail capturing Pokemon with the best fighting statistics and a variety of Pokemon types. 
+
+We are interested in finding a relationship between a Pokemon's classification as legendary and the other variables from the chosen dataset. Is it possible to predict if a Pokemon is legendary based on the predictors given in the data set? Is there a relationship between a Pokemon's legendary status and how strong it is based purely on its combat statistics? These are some of our initial questions we would like to answer through the means of regression analysis.
+
+## Data Summary
+
+The Complete Pokemon Dataset can be found on Kaggle.com. Initially, this data set had 41 variables and 801 observations. This data set was constructed using observations from the Pokemon website [Serebii](https://www.serebii.net/), which is a comprehensive database of all current Pokemon.  We first refined the data set by removing predictors that will have absolutely no use in our analysis. Some of these are a Pokemon's Pokedex Number}, Japanese Name, and Name, as these are just basic classifiers unique to a Pokemon. We then realized an issue that needed to be addressed were in regard to missing values. Specifically, there is an issue with Type2 having empty observations. These values are not necessarily 'missing' and we will address how to resolve this issue in more detail later on. In general, we merged both predictors into a new predictor Type by using the Type2 observations and adding them as new Type1 observations. We then renamed Type1 to Type. This created 404 new duplicated observations. One of the most concerning problems we found with the dataset were inaccurate observations. Specifically, in the most recent installment of the Pokemon franchise, they introduced new variants of older Pokemon, which has never happened before. Rather than make a new observation for these Pokemon, the creator of this dataset used some of the observations for the new Pokemon and put them into some of the observations of their older counterparts. Since this method technically creates Pokemon that do not actually have these qualities, we decided to fix some of their observations and create a set of new observations to account for this mistake. With these Pokemon variations being counted as separate observations, our dataset increased by 35 observations. 
+
+In addition, we removed Abilities and Classification because they are distinct to a specific evolution set of Pokemon and thus do not provide much explanatory power to any analysis we may run. We then removed 18 predictors Against 'Type' because we are interested in Type as a predictor and these observations are determined entirely by a Pokemon's type. Base Total was also removed based on similar reasoning. Base Total is the sum of six other predictors, so we chose to keep those six predictors and remove Total. This dataset, after changing Type and adding 35 new observations, includes 1240 observations and 16 variables. Legendary will be our response, with the other variables being predictors.
+
+The modified data set we will be working with is provided below.
+
+```{r data setup, echo=FALSE, message=FALSE, warning=FALSE}
+require(reshape2)
+require(ggplot2)
+require(lmtest)
+require(car)
+require(DT)
+library(dplyr)
+library(tidyr)
+require(brglm)
+
+p <- read.csv(file="pokemon532finalcompress.csv", header=TRUE, sep=",")
+
+p2 <- read.csv(file="pokemon532allPredictors.csv", header=TRUE, sep=",")
+
+#### factor Categorical
+p$generation= factor(p$generation)
+p$is_legendary= factor(p$is_legendary)
+p$type1= factor(p$type1)
+p$base_egg_steps= factor(p$base_egg_steps)
+p$percentage_male= factor(p$percentage_male)
+p$experience_growth= factor(p$experience_growth)
+p$base_happiness = factor(p$base_happiness)
+```
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+datatable(p, filter = "bottom", rownames = p[1,], options = list(pageLength = 5, autoWidth = TRUE))
+```
+
+### Legendary
+
+In each Pokemon game, there are a handful of unique Pokemon with higher overall combat statistics available, and they are known as 'Legendary' Pokemon. Unlike other Pokemon, there is only one of each of these Legendaries and you are only given one chance to capture them. The response Legendary uses binary coding with '1' signifying that a Pokemon is legendary and '0' signifying that it is not. Overall, we have 115 observations in this dataset that are classified as being a legendary Pokemon. In all of our other predictors, we will observe how that variable impacts the data visualization.
+
+
+### Combat Statistics: Attack, Sp. Attack, Defense, Sp. Defense, Speed, HP, Base Total
+
+Since Pokemon is primarily a turn based combat game, combat statistics are vital to the gameplay. Each Pokemon has six basic stats that give a numeric basis for how well it will perform in combat. Each of these values is a predictor in our data set. HP (hit points) is a numeric value determining how much damage from attacks a Pokemon can endure before being defeated (known as fainting). Attack is a value representing how powerful a physical attack will be from that Pokemon. There are two types of attacks, physical and special. Sp. Attack determines has powerful a special attack will be. Defense represents how resistant a Pokemon is to physical attacks and Sp. Defense determines how resistant it is to special attacks. Speed determines which Pokemon attacks first. The Pokemon with the higher speed statistic will attack first each turn. Base Total is the sum of the HP, Attack, Defense, Special Attack, Special Defense, and Speed statistics. Since we want to study these statistics individually, we decided to remove *Base Total* as a predictor from our analysis. 
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+df <- p[,c(2:7,17)]
+df.m <- melt(df, id.var = "is_legendary")
+
+ggplot(df.m, aes(x=variable, y=value, fill=variable)) + geom_boxplot() + ggtitle("Combat Statistics of Pokemon")
+
+ggplot(df.m, aes(x=variable, y=value,fill=is_legendary)) + geom_boxplot() + ggtitle("Combat Statistics of Pokemon Faceted on Legendary")
+
+```
+
+### Generation
+
+The Pokemon franchise is broken into different generations. Whenever a new game takes place in a different region, a new set of Pokemon are introduced unique to this generation. This data set classifies each Pokemon based on the generation it was introduced. There are currently 7 generations of Pokemon, and the predictor  Generation} classifies them with an integer value from 1 to 7.
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+plot <- ggplot(p, aes(x = generation, fill=generation))
+plot <- plot + geom_histogram(stat="count") +  ggtitle("How Many Pokemon In Each Generation")
+print(plot)
+
+plot <- ggplot(p, aes(x = generation, fill=generation))
+plot <- plot + geom_histogram(stat="count") +  ggtitle("How Many Pokemon In Each Generation, Faceted on Legendary Status") + facet_wrap(.~is_legendary)
+print(plot)
+```
+
+### Type
+
+There are two variables, Type1 and Type2, which describe the physical attribute (ie, typing) of the Pokemon. There are 18 different possible types a Pokemon can have, and the combat moves associated with a Pokemon's typing determines how well it performs against enemy Pokemon and their particular typing. A Pokemon can either have one type or two types. Whether a type is classified under Type1 or Type2 has no effect, as there is no ranking involved with the typing a Pokemon has. For example, a Pokemon with the typing Fire, Flying will be exactly the same as a Pokemon with Flying, Fire as its typing. Further, since some Pokemon are only one type, there are empty values in the Type2 observations. As the order does not matter for typing, and the empty values under a monotype Pokemon for Type2 aren't the same as a missing value, our solution was to merge these two predictors into a new predictor, which we defined as Type. To do this, we duplicated all observations with two types. The first Pokemon duplication had its Type as the original Type1 and the second Pokemon duplication had its Type come from the Type2 variable. This resulted in 403 new observations for our data set.
+
+The graph below shows the type distribution with the edited data in our data set.
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+colors <- c("lawngreen","black", "orange", "yellow", "pink", "brown", "red", "turquoise1", "purple", "green3", "tan3", "lightblue", "snow1", "magenta4", "violetred", "tan4", "darkgray", "blue")
+
+ggplot(p, aes(x=type1, fill=type1)) + geom_histogram(stat="count") + scale_fill_manual(values=colors) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Type Distribution of Pokemon") + ylab("Number of Pokemon") + xlab("Type")
+
+ggplot(p, aes(x=type1, fill=type1)) + geom_histogram(stat="count") + facet_wrap(is_legendary~.) + scale_fill_manual(values=colors) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Type Distribution of Pokemon Faceted on Legendary") + ylab("Number of Pokemon") + xlab("Type")
+```
+
+### Experience Growth
+
+Experience Growth represents how long it will take for a Pokemon to reach level 100. There are only a few different subsets of experience growth that a Pokemon can have (Medium Fast = 1000000, Fast = 800000, Erratic = 600000, Medium Slow = 1059860, Fluctuating = 1640000, Slow = 1250000). Erratic and Fluctuating are interesting due to piece wise functions determining the rate a Pokemon grows in level, because an Erratic Pokemon will level slowly at first, but at higher levels they grow in level very quickly. The inverse can be said for a Fluctuating Pokemon, which grows in level quickly at first but levels very slowly at higher levels. The other leveling rankings are based on a constant formula that does not change based on the level a Pokemon is at. For variable compression, we made 6 levels go down to 4. We combined 600,000 and 800,000 into "Fast", made 1,000,000 "Medium Fast", made 1,059,860 "Medium Slow", and combined 1,250,000 and 1,600,000 into "Slow".
+
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(p2, aes(factor(experience_growth), fill=factor(experience_growth))) + geom_histogram(stat="count") + ggtitle("Experience Growth Levels of Pokemon Pre-Compression") + xlab("Experience Growth Level") + ylab("Number of Pokemon") + guides(fill=FALSE)
+
+ggplot(p, aes(experience_growth, fill=experience_growth)) + geom_histogram(stat="count") + ggtitle("Experience Growth Levels of Pokemon") + xlab("Experience Growth Level") + ylab("Number of Pokemon")
+
+ggplot(p, aes(experience_growth, fill=experience_growth)) + geom_histogram(stat="count") + ggtitle("Experience Growth Levels of Pokemon Faceted on Legendary Status") + xlab("Experience Growth Level") + ylab("Number of Pokemon") + facet_wrap(.~is_legendary)
+```
+
+### Base Egg Steps
+
+Pokemon can be hatched from Eggs, and Base Egg Steps represents how many steps a trainer needs to take in-game with the egg in their party before the Pokemon hatches out of the egg. There are again only a few values of steps that a Pokemon can possess before hatching. For the sake of variable compression, for Base Egg Steps, we combine 1280, 2560, and 3840 and call it "Fast", leave 5120 as "Medium Fast", combine 6400, 7680, and 8960 as "Medium Slow", and have 10240, 20480, and 30720 as "Slow".
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(p2, aes(factor(base_egg_steps), fill=factor(base_egg_steps))) + geom_histogram(stat="count") + ggtitle("Base Egg Steps of Pokemon Pre-Compression") + xlab("Base Steps Level") + ylab("Number of Pokemon") + guides(fill=FALSE)
+
+ggplot(p, aes(base_egg_steps, fill=base_egg_steps)) + geom_histogram(stat="count") + ggtitle("Base Egg Steps of Pokemon") + xlab("Base Steps Level") + ylab("Number of Pokemon")
+
+ggplot(p, aes(base_egg_steps, fill=base_egg_steps)) + geom_histogram(stat="count") + ggtitle("Base Egg Steps of Pokemon Faceted on Legendary Status") + xlab("Base Steps Level") + ylab("Number of Pokemon") + facet_wrap(.~is_legendary)
+```
+
+
+### Height and Weight
+
+Every Pokemon has a specific height (measured in meters) and weight (measured in kilograms) associated with it.
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(p, aes(y=height_m, fill="red")) + geom_boxplot() +ggtitle("Height of Pokemon") + guides(fill=FALSE)
+
+ggplot(p, aes(x=is_legendary,fill=is_legendary, y=height_m)) + geom_boxplot() +ggtitle("Height of Pokemon Faceted on Legendary Status")
+
+ggplot(p, aes(y=weight_kg, fill="red")) + geom_boxplot() + ggtitle("Weight of Pokemon") + guides(fill=FALSE)
+
+ggplot(p, aes(x=is_legendary,fill=is_legendary, y=weight_kg)) + geom_boxplot() +ggtitle("Weight of Pokemon Faceted on Legendary Status")
+
+```
+
+### Capture Rate
+
+In order to capture a Pokemon in the wild, you need to successfully capture it in a Pokeball and pass through a mathematical formula so that a Pokemon stays in its Pokeball. A Pokemon's capture rate is a value between 1 and 255 that goes into the aforementioned formula that determines how easy it would be to capture said Pokemon, where 1 represents it being very challenging to capture and 255 represents it being very easy. The formula itself isn't relevant to our analysis, but the values in this variable may give us some insight into our response. By looking at the Capture Rate boxplot faceted on Legendary, it looks like a low Capture Rate is associated with being a legendary Pokemon. This makes sense, as it is common knowledge in Pokemon how challenging legendary Pokemon can be to capture in combat. 
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(p, aes(y=capture_rate, fill="red")) + geom_boxplot() +ggtitle("Capture Rate of Pokemon") + ylab("Capture Score") + guides(fill=FALSE)
+
+ggplot(p, aes(x=is_legendary,fill=is_legendary, y=capture_rate)) + geom_boxplot() +ggtitle("Capture Rate of Pokemon Faceted on Legendary Status")
+```
+
+### Percentage Male
+
+This observation represents the percentage chance (from 0 to 100) that a Pokemon found in the wild is male. There are again only a few different rankings regarding the ratio of gender for Pokemon (either all male, 7:1 male, 3:1 male, 1:1 male, 1:3 male, 1:7 male, no males, or genderless). For the sake of this dataset, if a Pokemon is considered genderless then it is considered to have a 0 percent chance of being male. We compress Percentage Male into three factors - either a Pokemon has less than 50 percent chance to be male, a 50 percent chance to be male, or above a 50 percent chance of being male. With Percentage Male being the way it is defined in our data set, it does lump in Pokemon that have no gender in with Pokemon that are exclusively female.
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(p2, aes(factor(percentage_male), fill=factor(percentage_male))) + geom_histogram(stat="count") + ggtitle("Percentage of Male Pokemon Pre-Compression") + xlab("Percent") + ylab("Number of Pokemon") + guides(fill=FALSE)
+
+ggplot(p, aes(percentage_male, fill=percentage_male)) + geom_histogram(stat="count") + ggtitle("Percentage of Male Pokemon Post-Compression") + xlab("Percent") + ylab("Number of Pokemon") + guides(fill=FALSE)
+
+ggplot(p, aes(percentage_male, fill=percentage_male)) + geom_histogram(stat="count") + ggtitle("Percentage of Male Pokemon Faceted on Legendary Status") + xlab("Percent") + ylab("Number of Pokemon") + facet_wrap(.~is_legendary)
+```
+
+### Base Happiness
+
+When a Pokemon is captured by a trainer in-game, it starts off with a base happiness score that can take a value from 0 to 255. Happiness is useful in determining the power of certain attacks in the game (like Return and Frustration), as well as helping specific types of Pokemon evolve into another form and become stronger. There are only a specific subset of happiness values a Pokemon can have for base happiness, which was fairly surprising upon initially looking at the dataset. We compress Base Happiness into a binary response, as over $\frac{5}{6}$ of the observations in our data set have a Base Happiness of 70.
+
+```{r, echo=FALSE, warning=FALSE}
+ggplot(p2, aes(factor(base_happiness), fill=factor(base_happiness))) + geom_histogram(stat="count") + ggtitle("Base Happiness of Pokemon Pre-Compression") + xlab("Percent") + ylab("Number of Pokemon") + guides(fill=FALSE)
+
+ggplot(p, aes(base_happiness, fill=base_happiness)) + geom_histogram(stat="count") + ggtitle("Base Happiness of Pokemon") + xlab("Percent") + ylab("Number of Pokemon") 
+
+ggplot(p, aes(base_happiness, fill=base_happiness)) + geom_histogram(stat="count") + ggtitle("Base Happiness of Pokemon Faceted on Legendary Status") + xlab("Percent") + ylab("Number of Pokemon") + facet_wrap(.~is_legendary)
+```
+
+### Classification Variables: Japanese Name, Name, Pokedex Number, Classification
+
+Japanese Name, Name, Classification, and Pokedex Number are basic classifiers given to a single Pokemon to distinguish it from other Pokemon. There's no real explanatory power behind having these particular values be a part of our analysis, as they are distinct to each Pokemon. Based on this fact, we removed them from our list of predictors and subsequent analysis.
+
+### Abilities
+
+Every Pokemon has either one or two abilities associated with it. The ability is determined at random if there is more than one ability that a Pokemon can have. In this dataset, the abilities are written out by hand, and there are over 100 abilities that a Pokemon can possess. We decided to remove this categorical variable from our analysis due to the sheer complexity and likely lack of explanatory power that this variable provided to our analysis, as most abilities were unique to a specific Pokemon.
+
+### 18 Against Type Predictors
+
+There are also 18 predictors labeled Against 'Type' for each of the 18 types a Pokemon or its attack move can be. These describe how effective a particular Pokemon is in combat against a Pokemon with a certain typing. There are six possible values that each of these predictors can have: 0, .25, .5, 1, 2, 4. These values act as multipliers to the damage done by a certain attack; for example, a value of 0 would mean the attack does no damage, while a value of 4 would imply four times the normal damage is done. These scores are entirely determined by what type a Pokemon is and what type the attack move is. Since a Pokemon's type determines these values through an equation, we decided to remove them since we are interested in using the Type variable instead.
+
+### Looking at The Data Given A Specific Type
+
+
+```{r, echo=FALSE}
+output <- c()
+Type <- unique(p$type1)
+ inputPanel(selectInput("type1","Select Type",Type,"a"))
+
+type <- reactive({
+     input$type1
+})
+output$text <- renderText({ 
+          type()
+     })
+
+renderText ({
+  sprintf("The number of Pokemon that have this type is %s", length(which(p$type1 == input$type1)))
+})
+
+renderText ({
+  sprintf("The number of legendary Pokemon for this typing is %s", length(which(p[p$type1 == input$type1, 17] == 1)))
+})
+
+renderPlot({
+plot <- ggplot(p[p$type1 == input$type1,], aes(x = generation, fill=generation))
+plot <- plot + geom_histogram(stat="count") +  ggtitle("How Many Pokemon In Each Generation, Given A Specific Type")
+print(plot)
+})
+
+renderPlot ({boxplot(p[p$type1 == input$type1,]$hp, p[p$type1 == input$type1,]$attack, p[p$type1 == input$type1,]$defense,p[p$type1 == input$type1,]$sp_attack,p[p$type1 == input$type1,]$sp_defense,p[p$type1 == input$type1,]$speed,
+        data=p[p$type1 == input$type1,], ylab="Base Stats", main="Pokemon Combat Stats Boxplot, Given Specific Type",  col=("skyblue"),
+        names=c("HP", "Attack", "Def.", "Sp. Atk", "Sp. Def.", "Speed"))})
+
+renderPlot({ggplot(p[p$type1 == input$type1,], aes(y=height_m, fill="red")) + geom_boxplot() +ggtitle("Height of Pokemon") + guides(fill=FALSE)})
+
+renderPlot({ggplot(p[p$type1 == input$type1,], aes(y=weight_kg, fill="red")) + geom_boxplot() +ggtitle("Weight of Pokemon") + guides(fill=FALSE)})
+
+# df <- p[,c(2:7,15)]
+# df.t <- melt(df, id.var = "type1")
+# 
+# ggplot(df.t[df.t$type1 == input$type1,], aes(x=variable, y=value, fill=variable)) + geom_boxplot() + ggtitle("Combat Statistics of Pokemon Based on Type")
+
+```
+
+### Looking At The Data Given A Specific Generation
+
+```{r, echo=FALSE}
+output <- c()
+Gen <- unique(p$generation)
+ inputPanel(selectInput("generation","Select Generation",Gen,"a"))
+
+generation <- reactive({
+     input$generation
+})
+output$text <- renderText({ 
+          generation()
+     })
+
+renderText ({
+  sprintf("The number of Pokemon from this generation: %s", length(which(p$generation == input$generation)))
+})
+
+renderText ({
+  sprintf("The number of legendary Pokemon from this generation: %s", length(which(p[p$generation == input$generation, 17] == 1)))
+})
+
+renderPlot({
+  ggplot(p[p$generation == input$generation,], aes(x=type1, fill=type1)) + geom_histogram(stat="count") + scale_fill_manual(values=colors) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Type Distribution of Pokemon Given a Specific Generation") + ylab("Number of Pokemon") + xlab("Type")
+})
+
+renderPlot ({boxplot(p[p$generation == input$generation,]$hp, p[p$generation == input$generation,]$attack, p[p$generation == input$generation,]$defense,p[p$generation == input$generation,]$sp_attack,p[p$generation == input$generation,]$sp_defense,p[p$generation == input$generation,]$speed,
+        data=p[p$generation == input$generation,], ylab="Base Stats", main="Pokemon Combat Stats Boxplot, Given Specific Generation",  col=("skyblue"),
+        names=c("HP", "Attack", "Def.", "Sp. Atk", "Sp. Def.", "Speed"))})
+
+renderPlot({ggplot(p[p$generation == input$generation,], aes(y=height_m, fill="red")) + geom_boxplot() +ggtitle("Height of Pokemon") + guides(fill=FALSE)})
+
+renderPlot({ggplot(p[p$generation == input$generation,], aes(y=weight_kg, fill="red")) + geom_boxplot() +ggtitle("Weight of Pokemon") + guides(fill=FALSE)})
+
+```
+
+## Beginning Analysis on Our Dataset
+
+We decide to fit the naive model with Legendary as our response and the other variables we deemed acceptable for analysis as predictors. When we try running this, however, we get highly inflated standard errors and issues with perfect separation. To remedy this, we use brglm (a bias reduction method). 
+
+```{r}
+mod1 <- glm(is_legendary ~ type1 + hp + attack + defense + sp_attack + sp_defense + speed + generation  + capture_rate + base_egg_steps + base_happiness + height_m + weight_kg + experience_growth + percentage_male, family="binomial", maxit=100, data=p)
+summary(mod1)                          
+```
+
+### Fitting the brglm model
+
+The brglm model is a bias reduction method that will ensure that we get finite standard errors despite our maximum likelihood estimator going to infinity. As we hoped, this does indeed fix our issue of perfect seperation. Our initial brglm model fit is below:
+
+```{r}
+mod2 <-brglm(is_legendary ~ type1 + hp + attack + defense + sp_attack + sp_defense + speed + generation  + capture_rate + base_egg_steps + base_happiness + height_m + weight_kg + experience_growth + percentage_male, family="binomial", data=p)
+summary(mod2) 
+```
+
+## Diagnostics
+
+To test the model fit we run diagnostics to check the residuals and see if there may be any potential outliers. When we did this we found one particular observation, 168, that was at the edge of a lot of our diagnostic plots. This Pokemon, called Cosmoem, wasn't technically an outlier if you checked this Pokemon's studentized residual score, but looking further into this Pokemon, we realized Cosmoem's overall statistics were pretty uneven. This Pokemon is so dense due to being based off a galaxy, but even beyond that, Cosmoem has uneven combat statistics. Cosmoem has good Defense and Special Defense values, both of which are over 100, but all of the other values associated with Cosmoem are 40 or below, which are considered mediocre in game. We experimented with removing Cosmoem from our model, considering that we have a decent chunk of observations in our model. When we remove him from our fitted brglm model, the AIC score drops almost 6 points and weight becomes significant at the .05 level as a predictor now. Weight was previously insignificant which could be due to the fact that Cosmoem is both the smallest Pokemon (at .1 meters tall) and the heaviest Pokemon (at 999.9 kg). Moving forward, we will keep Cosmoem out of our data analysis.
+
+```{r} 
+pchisq(57.004, 1198, lower=FALSE)
+par(mfrow=c(2,2))
+plot(mod2)
+studres1 <- rstudent(mod2)
+range(studres1)
+p <- p[-168,]
+mod3 <-brglm(is_legendary ~ type1 + hp + attack + defense + sp_attack + sp_defense + speed + generation  + capture_rate + base_egg_steps + base_happiness + height_m + weight_kg + experience_growth + percentage_male, family="binomial", data=p)
+summary(mod3)
+```
+
+## Model Reduction through AIC and Group LASSO
+
+Moving forward, we look into two methods of model selection. First we will try using stepwise forward/backward AIC. The other approach we consider is using Group LASSO, since we have so many categorical variables. 
+
+### Model Selection: Stepwise
+
+Starting with our saturated model with 15 variables, we use forward/backward AIC to reduce the model. This removes 5 variables: Special Defense, Speed, Height, Generation, and Capture Rate. Out of the 10 remaining variables, Attack is the only one that is statistically insignificant. We decide to remove this manually to see if we can improve this model further. As seen in the chart, removing attack creates a model that is acceptable based on the likelihood ratio test. This model slightly increases both the AIC score and residual deviance, but as a judgment call we decided that these increases were minor. This reduced model without Attack now has Defense as an insignificant variable. Removing Defense, again this new model is acceptable based on the likelihood ratio test. Once again, this reduction slightly increases AIC and residual deviance further. Since these increases are negligible and we no longer have insignificant predictors, we decide to keep this as the final model based on the stepwise method.
+
+```{r message=FALSE, warning=FALSE} 
+mod4 <- brglm(is_legendary ~ type1 + hp + attack + defense + sp_attack + base_egg_steps + base_happiness + weight_kg + experience_growth + percentage_male, family = "binomial", data = p, maxit=100)
+summary(mod4) 
+#remove attack
+mod5 <- brglm(is_legendary ~ type1 + hp + defense + sp_attack + 
+                 base_egg_steps + base_happiness + weight_kg + experience_growth +
+                 percentage_male, family = "binomial", data = p, maxit=100)
+summary(mod5) 
+lrtest(mod4,mod5)
+#remove defense
+mod6 <- brglm(is_legendary ~ type1 + hp + sp_attack + base_egg_steps + base_happiness + weight_kg + experience_growth + percentage_male, family = "binomial", data = p, maxit=100)
+summary(mod6) 
+pchisq(deviance(mod6), df.residual(mod6), lower=FALSE)
+lrtest(mod5,mod6)
+
+mod7 <- brglm(is_legendary ~ hp + defense + sp_attack + sp_defense + speed +
+                base_egg_steps + capture_rate + weight_kg + generation +
+                percentage_male, family = "binomial", data = p)
+summary(mod7)
+```
+
+### Model Selection: Group LASSO
+
+Our next approach for model selection uses Group LASSO. To avoid model reduction removing parts of categorical predictors, we make each variable its own group, ensuring that the removal of a variable includes each of its categories as well. Starting with the saturated model, Group LASSO removes: Attack, Base Happiness, Weight, Type, and Experience Growth. Notice that this method also removed 5 variables but it chose entirely different ones to remove. As we can see in the model summary, there are still multiple predictors that are insignificant including: Generation, HP, Special Defense, Capture Rate, and Weight. To improve our model further we decide to use stepwise AIC on the Group LASSO reduced model. As a result, all of these insignificant predictors were removed. This will be the final model we use based Group LASSO.
+
+```{r}
+mod7 <- brglm(is_legendary ~ hp + defense + sp_attack + sp_defense + speed +
+                base_egg_steps + capture_rate + weight_kg + generation +
+                percentage_male, family = "binomial", data = p)
+summary(mod7)
+```
+
+### Choosing a final model: stepwise or Group LASSO
+
+We notice that there are only three common predictors kept in both models chosen:  Special Attack,  Base Egg Steps, and  Percentage Male. As these models aren't nested we will analyze the information we do have about the models to determine which one is more useful for our needs. 
+
+First we note that the Group LASSO model is more conservative at predicting a legendary Pokemon as it has fewer positive estimates associated with its predictors. Initially a Pokemon starts off as being very unlikely to be a legendary, and the chance of it being legendary increases with the increase in the combat statistics (holding all other factors constant given a one unit increase in the continuous predictors). It will also increase or decrease dependent on which of the categories this Pokemon falls under for  Base Egg Steps or Percentage Male. 
+
+When we observe our stepwise model we notice that we need to be cognizant of the fact that not all the categories that are a part of  Type are significant at the .05 level. Still, we note that while our intercept is lower this time more coefficients are strongly positive (in particular,  Base Egg Steps Slow) to combat the increase in the negative coefficient. We also note that being a certain type also is positively associated with being  Legendary, holding all other factors constant. In particular, Poison, Ground, Fighting, and Electric are types that are significant and positively associated with being legendary.  Base Happiness being 70 is negatively associated with being  Legendary, which seems believable based on our previous knowledge of Pokemon.
+
+When we compare these two models we notice that the deviance for the Stepwise model is lower, though both are easily acceptable according to a deviance point of view. The AIC scores are comparable. When we run cross-validation on these models we get an error rate of 1.4 percent for the Group LASSO model and 2.4 percent for the Stepwise model. Overall, both models have all coefficients significant, but  Type does has components of it that are insignificant.
+
+We choose the Group LASSO model over the stepwise model for a few reasons. While both are acceptable, have close AIC scores and pass the Pearson's chi squared test with a score of 1, the Group LASSO model has a lower testing error. Additionally, we find the Group LASSO method to be a more robust method for model selection. Since the Group LASSO method chose fewer predictors in its final model, we also prefer this since it is simpler. 
+
+```{r}
+mod8 <- brglm(formula = is_legendary ~ defense + sp_attack + speed + base_egg_steps + 
+       percentage_male, family = "binomial", data = p)
+summary(mod8)
+
+pchisq(deviance(mod8), df.residual(mod8), lower=FALSE)
+```
+
+### Final Model Interpretation
+
+When observing this summary, we note that overall the model is more conservative at predicting a legendary Pokemon than our stepwise model was. Here, for our model to predict a legendary Pokemon, the Pokemon will almost necessarily need to have its Base Egg Steps be categorized as slow and its Percentage Male categorization to be below 50 percent. Holding all other factors constant, for a one unit increase in one of the combat statistics in this model (Defense, Special Attack, or Speed), the chance of the Pokemon being legendary increases slightly (though it is most positively affected by a high special attack stat). Overall, we think this model is acceptable for trying to predict a legendary Pokemon, as the error percentage is very low (1.4 percent). Overall, we were successful in analyzing the relationship between a Pokemon's legendary status and its other characteristics. One surprising result we found is just how few variables are significant in predicting whether a Pokemon is legendary. In particular, we were surprised that Base Egg Steps was significant in predicting a Legendary Pokemon, considering that as Legendary Pokemon do not hatch from eggs, the statistic is worthless in game. However, the developers of Pokemon gave values to that statistic, and it is indeed important to predicting whether a Pokemon is a Legendary or not.
