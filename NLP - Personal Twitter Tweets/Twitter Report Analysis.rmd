@@ -1,0 +1,392 @@
+---
+title: "Twitter Report Analysis"
+author: "Amanda Park"
+date: "7/20/2019"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+This is a project I've started working on to analyze my Twitter data that has been collected since I've created my account in 2009. The main purpose is to practice some Natural Language Processing on myself to see what trends I can find based on what I've tweeted as a teenager and young adult. 
+
+### Initial Variables Given in tweets.csv
+
+I downloaded an archive of my Twitter data by accessing the settings and requesting it to be sent to my email address. The data initially sent in a .csv file included:
+
+* `tweet_id` (ie, the ID number of the tweet you sent out across ALL of Twitter's users - these values went astronomically high, and later tweets sent out had higher values than lower tweets, which intuitively makes sense) 
+
+* `in_reply_to_id` (the ID of the tweet that you replied to; if you didn't use this tweet to reply, it's blank)
+
+* `in_reply_to_user_id` (the ID number of the user that you replied to, and this is stored as an integer number, not as a person's username, as the latter can be changed by a user at any time)
+
+* `timestamp` (the time the tweet was sent on your account, stored in "year-month-day hour:minute:second 0000" format)
+
+* `source` (stored as html elements based on where you sent your tweet from)
+
+* `text` (the words/symbols/data you put into the actual tweet)
+
+* `retweeted_status_id` (the ID of the retweet when you sent it out; this is blank if that tweet was not a retweet)
+
+* `retweeted_status_user_id` (the ID of the user you retweeted from, and again is blank if your tweet was not a retweet)
+
+* `retweeted_status_timestamp` (the timestamp of the retweeted tweet from the original writer of the tweet)
+
+* `expanded_urls` (generally offers a link to an image or a web page that either myself or someone else has linked to)
+
+A lot of these variables I found tedious for meaningful analysis, so I manipulated that data in Microsoft Excel to answer these questions:
+
+```{r data setup, echo=FALSE, message=FALSE, warning=FALSE}
+require(ggplot2)
+require(DT)
+library(dplyr)
+library(tidyr)
+require(tidytext)
+require(textdata)
+require(tm)
+require(syuzhet)
+library(topicmodels)
+require(forcats)
+
+fullDat <- read.csv("tweets.csv")
+shrunkDat <- fullDat[,c(5,7,12,13,14,17)]
+shrunkDat$text <- as.character(shrunkDat$text)
+shrunkDat$dateMonthYear <- as.Date(paste(shrunkDat$dateMonthYear, "-01", sep=""))
+shrunkDat <- shrunkDat[shrunkDat$tweetSource!="Automated",]
+shrunkDat2 <- shrunkDat[!is.na(shrunkDat$timeOfDayRange),]
+```
+
+### Is a tweet a retweet?
+To answer this, I created a binary variable wasRT that is labeled Yes if a tweet was retweeted and No if it wasn't by using IF statements. This allowed me to get rid of the two retweeted variables mentioned above, as I don't have an interest in tracking who I retweeted something from.
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+ggplot(shrunkDat, aes(x = wasRT, fill=wasRT)) + geom_histogram(stat="count") +  ggtitle("Was a tweet a RT?")
+
+```
+
+Overall, most of my tweets are not retweets. About 20% of my tweets are retweets.
+
+### Is this tweet a reply?
+Much like above, I created a binary variable wasReply where Yes indicates it was a reply and no indicates it wasn't. Replies are disjoint from retweets - that is to say, a tweet cannot be both a retweet and a reply. However, a tweet can be neither a retweet nor a reply - these simply constitute messages I wrote and didn't respond to someone else's message.
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+ggplot(shrunkDat, aes(x = wasReply, fill=wasReply)) + geom_histogram(stat="count") +  ggtitle("Was a tweet a Reply?")
+
+```
+
+Overall, most of my tweets are not replies. Roughly 1/3 of my tweets are replies.
+
+### When did I send this tweet?
+To tackle this, I first realized the way Twitter stored the timestamp data was a pain to analyze. I split up the timestamp variable into date and time by using the Text to Columns function in Excel. First, I worked with time, and I decided to track only the year and month of tweets for the sake of making time series analysis easier down the line. Thus, dates are stored in year-month format.
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+ggplot(shrunkDat, aes(x=dateMonthYear)) + geom_bar() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +ggtitle("Amount of tweets Sent Over The Years")
+
+```
+
+We can see looking at this preliminary chart that I posted quite a bit in 2016, but didn't tweet at all for a year between 2017-2018 (this was a self-imposed break I took from Twitter). 
+
+### What time did I send this tweet?
+
+The other variable that needed to be adjusted was time. Rather than keeping time down to the second (or even minute), I created ranges to store time. How I labeled the time of my tweets is as follows:
+
+Morning - 6:00 AM to 11:59 AM
+
+Afternoon - 12:00 PM to 4:59 PM
+
+Evening - 5:00 PM to 8:59 PM
+
+Night - 9:00 PM to 5:59 AM (though the latest I ever sent a tweet was actually 1:47 AM, so I suppose that's the real bound here)
+
+Night has a larger range to catch data in; however, throughout the past 10 years, even when my sleep schedule has been at its worst, I've usually dragged myself to bed by midnight at the latest. And while I only sent a grand total of one tweet at 6:00 AM, it did happen, so that's a valid range to start morning at, as far as I'm concerned.
+
+Up until October 2010, Twitter did not store the time with which tweets were sent. For all of these values, I have stored time as NA. This affects the earliest tweet (from August 2009) until the last tweet in October 2010, which is ~50 tweets.
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+ggplot(shrunkDat, aes(x = timeOfDayRange, fill=timeOfDayRange)) + geom_histogram(stat="count") +  ggtitle("When tweets Were Sent In A Day")
+
+```
+
+Overall, looking at this chart afternoon and evening tweets are more common for me than other types of tweets, though I've still made a fair number of tweets in the morning and night as well. 
+
+### Where did I send my tweets from?
+
+I've used Twitter through both my browser and phone over these 10 years. I mostly wanted to track which one was more popular, but I ran into another consideration as I was looking at the data. Because of using services such as IFTTT, I've sent out quite a few automated tweets on my account. A lot of these I have deleted over the years because they made my account seem spammy (I'd argue I probably had ~150 before using a tweet deletion service), but a few still linger on my account that are less spammy in nature. Thus I have three labelings for tweet source: Automated, Website, and Mobile. Automated has very few observations in it, and I will eliminate it because the purpose of this project is to test what words I write in my tweets most, but I don't choose what's written in automated messages.
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+ggplot(shrunkDat, aes(x = tweetSource, fill=tweetSource)) + geom_histogram(stat="count") +  ggtitle("Where Did I Send My tweets From?")
+
+```
+
+Both mobile and website are pretty close as far as where tweets are sent from, though I do seem to have a slight preference for posting tweets from the web. 
+
+## Data Visualizations
+
+Thus, we have 6 variables to work with for further analysis: `tweetSource`, `text`, `wasRT`, `wasReply`, `dateMonthYear`, and `timeOfDayRange`. The variable `text` will take a lot more work to clean up, so let's start with preliminary analysis of our other variables first by now looking at our data when it's sorted based on certain variables.
+
+
+```{r echo=FALSE, message=FALSE, warning = FALSE}
+
+datatable(shrunkDat, filter = "bottom", rownames = shrunkDat[2,], options = list(pageLength = 10, autoWidth = TRUE))
+```
+
+### Considering Plots Based On Being A retweet
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+plot <- ggplot(shrunkDat2, aes(x = timeOfDayRange, fill=timeOfDayRange))
+plot <- plot + geom_histogram(stat="count") +  ggtitle("How Many Retweets, Given Time of Day") + facet_wrap(.~wasRT)
+print(plot)
+
+```
+
+A similar trend seems to hold for retweets or not, given the time of day. Slightly fewer retweets are sent at night compared to otherwise, but nothing very notable pops out of this.
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat, aes(x = tweetSource, fill=tweetSource))
+plot <- plot + geom_histogram(stat="count") +  ggtitle("How Many Retweets, Given Tweet Source") + facet_wrap(.~wasRT)
+print(plot)
+```
+
+If a tweet is a retweet it's far more likely to have been sent through the website rather than through a mobile device, though if it's not a retweet the bar plot is a lot more uniform.
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat, aes(x = dateMonthYear, fill=wasRT))
+plot <- plot + geom_bar() +  ggtitle("How Many Retweets Over The Years") + facet_wrap(.~wasRT)
+print(plot)
+```
+
+Here, we can see that I've recently begun to send out a lot more retweets compared to before, and less original tweets in its place. Before, I mostly sent out original tweets supplemented by retweets.
+
+### Considering Plots Based On Reply
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat2, aes(x = timeOfDayRange, fill=timeOfDayRange))
+plot <- plot + geom_histogram(stat="count") +  ggtitle("How Many Replies, Given Time of Day") + facet_wrap(.~wasReply)
+print(plot)
+```
+
+Here, we can see that if a tweet is a reply, the time of day with which it was sent out is pretty uniformly distributed. However, if the tweet is not a reply, it's most likely to have been sent out during the evening (which holds with the general trend of the data given before).
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat, aes(x = tweetSource, fill=tweetSource))
+plot <- plot + geom_histogram(stat="count") + facet_wrap(.~wasReply) + ggtitle("How Many Replies, Given The Tweet Source")
+print(plot)
+```
+
+Looking at this graph, we can see that when a reply was a tweet, it's almost equally likely to be sent from mobile as it is from the website. However, if it's not a reply then it's more likely to have been sent from the website.
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat, aes(x = dateMonthYear, fill=wasReply))
+plot <- plot + geom_bar() +  ggtitle("How Many Replies Over The Years") + facet_wrap(.~wasReply)
+print(plot)
+```
+
+Here, we can see that I didn't start out writing a lot of tweet replies when I first started using Twitter, but slowly started to reply more as time went on (the year break from Twitter anomaly aside). Even now, I still do have a tendency to not send out replies than otherwise, though.
+
+### Considering Plots Based on The Time of Day
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat2, aes(x = tweetSource, fill=tweetSource))
+plot <- plot + geom_bar() +  ggtitle("Where Did I Tweet From, Given The Time Of Day") + facet_wrap(.~timeOfDayRange)
+print(plot)
+```
+
+We can see looking at this plot that I have a tendency to send a lot more tweets via the website in the evening. This makes sense because I am generally around a computer more in the evening than at other times.
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat2, aes(x = wasReply, fill=wasReply))
+plot <- plot + geom_bar() +  ggtitle("Was My Tweet a Reply, Given The Time Of Day") + facet_wrap(.~timeOfDayRange)
+print(plot)
+```
+
+According to this plot, we can see that I'm more likely to reply if the time is in the morning or evening. The amount I reply holds fairly constant across all four time zones, but in the afternoon and evening I'm more likely to send out a tweet that is not a reply.
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat2, aes(x = wasRT, fill=wasRT))
+plot <- plot + geom_bar() +  ggtitle("Was My Tweet a Retweet, Given The Time Of Day") + facet_wrap(.~timeOfDayRange)
+print(plot)
+```
+
+In general, the ratio of retweets doesn't fluctuate a whole lot, though it seems to be the worst for the night category in particular.
+
+```{r, echo=FALSE, warning=FALSE}
+plot <- ggplot(shrunkDat2, aes(x = dateMonthYear,fill=timeOfDayRange))
+plot <- plot + geom_bar() +  ggtitle("When My Tweet Was Sent Over The Years") + facet_wrap(.~timeOfDayRange)
+print(plot)
+```
+
+Overall, the most interesting thing with this graph is that a large amount of my spike in tweets in 2016 were sent in the evening. 
+
+## Trying Out Sentiment Analysis
+
+With the preliminary analysis out of the way, let's start taking a look at the content of the tweets I wrote over the past 10 years. The main things I want to try out are plotting the most used words by frequency for both normal tweets and non-retweets (ie, tweets authored by myself), sentiment analysis via Bing, AFINN, and nrc, and Latent Dirichlet Allocation.
+
+```{r, warning=FALSE}
+#Natural Language Processing Ahoy - create a corpus without any links inside
+tweets <- shrunkDat$text
+tweets <- gsub(" http.*","", tweets)
+textSource <- VectorSource(tweets)
+textCorpus <- VCorpus(textSource)
+
+#tweets That I Wrote
+noRTs <- shrunkDat[shrunkDat$wasRT == "No",]$text
+
+#Preprocessing data
+textCorpus <- tm_map(textCorpus, removeNumbers)
+textCorpus <- tm_map(textCorpus, removePunctuation)
+textCorpus <- tm_map(textCorpus, content_transformer(tolower))
+#ladymkv is a twitter user and not a real word; just and like were common words I used
+#but they felt like filler words to me and thus I removed them from the analysis
+textCorpus <- tm_map(textCorpus, removeWords, c(stopwords("english"), "ladymkv", "just", "like", "httpstcozeeyiqfnt", "samthediscokid", "nebulafight", "samiswagbuck", "diapasonadam", "juliainfinland", "thecrazymacguy", "motokovalentin", "adamscheft", "ericstangel", "jomamasass", "rachelth", "buffkitfisto"))
+textCorpus <-tm_map(textCorpus, stripWhitespace)
+textCorpus <-tm_map(textCorpus, stemDocument)
+
+textCorpusPTD <- tm_map(textCorpus, PlainTextDocument)
+
+#Get data plot ready
+TDM <- TermDocumentMatrix(textCorpusPTD)
+tweetMatrix <- as.matrix(TDM)
+DTM <- DocumentTermMatrix(textCorpusPTD)
+termFreq <- colSums(as.matrix(DTM))
+tf <- data.frame(term = names(termFreq), freq = termFreq)
+
+#Summing rows and sorting by frequency
+term_frequency <- rowSums(tweetMatrix)
+term_frequency <- sort(term_frequency, decreasing = TRUE)
+# Create a barplot
+barplot(term_frequency[1:20], col = "tan", las = 2, main="Most Frequently Used Words In tweets")
+```
+
+Get game now. Gee, not really hiding my gaming background so well when it's analyzed like this! I'm pretty sure that peopl got shortened from people and people's, and some contractions are now mushed together (like with don't being dont), but overall the analysis seems pretty clear about which words are most used. 
+
+
+### Words used when considering only written tweets
+
+
+```{r, echo=FALSE, warning=FALSE}
+textSource <- VectorSource(noRTs)
+textCorpus <- VCorpus(textSource)
+
+#tweets That I Wrote
+noRTs <- shrunkDat[shrunkDat$wasRT == "No",]$text
+
+#Preprocessing data
+textCorpus <- tm_map(textCorpus, removeNumbers)
+textCorpus <- tm_map(textCorpus, removePunctuation)
+textCorpus <- tm_map(textCorpus, content_transformer(tolower))
+#ladymkv and others are twitter users and not real words; just and like were common words I used
+#but they felt like filler words to me and thus I removed them from the analysis
+textCorpus <- tm_map(textCorpus, removeWords, c(stopwords("english"), "ladymkv", "just", "like", "httpstcozeeyiqfnt", "samthediscokid", "nebulafight", "samiswagbuck", "diapasonadam", "juliainfinland", "thecrazymacguy", "motokovalentin", "adamscheft", "ericstangel", "jomamasass", "rachelth", "buffkitfisto"))
+textCorpus <-tm_map(textCorpus, stripWhitespace)
+textCorpus <-tm_map(textCorpus, stemDocument)
+
+textCorpusPTD <- tm_map(textCorpus, PlainTextDocument)
+
+#Get data plot ready
+TDM <- TermDocumentMatrix(textCorpusPTD)
+tweetMatrix <- as.matrix(TDM)
+DTM <- DocumentTermMatrix(textCorpusPTD)
+termFreq <- colSums(as.matrix(DTM))
+tf <- data.frame(term = names(termFreq), freq = termFreq)
+
+#Summing rows and sorting by frequency
+term_frequency <- rowSums(tweetMatrix)
+term_frequency <- sort(term_frequency, decreasing = TRUE)
+# Create a barplot
+barplot(term_frequency[1:20], col = "tan", las = 2, main="Most Frequently Used Words In Non-retweets")
+```
+
+Overall, the words most common in my tweets don't change much when I take out retweets. This makes sense because the people I tend to retweet from will generally speak in a different manner than myself, so those would be filtering out words that are less commonly used in my vocabulary anyway.
+
+### Sentiment Analysis
+
+Now, let's take a look and get a sense of how my tweets are emotionally through some good old sentiment analysis (we will be excluding retweets from this point forward). We will look at the data through Bing and nrc sentiments. I did analysis on AFINN, but because shinpapps.io does not like one of the packages required necessary to conduct the analysis, I will cut that code out for the time being.
+
+#### Bing sentiment
+
+Bing sentiment is unique in that it classifies words by being either positive or negative on a binary scale. Not all the words in the previous part will be seen when computing sentiment, but rather just words that have a strong emotional charge to them. 
+
+```{r, warning=FALSE}
+#Computing sentiment
+#Using bing to determine positive/negative sentiment
+tidytf <- tidy(DTM)
+tfSentimentBing <- tidytf %>%
+  inner_join(get_sentiments("bing"), by = c(term="word"))
+
+tfSentimentBing %>%
+  count(sentiment, term, wt = count) %>%
+  filter(n >= 15) %>%
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(term = reorder(term, n)) %>%
+  ggplot(aes(term, n, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab("Contribution to sentiment") +
+  ggtitle("Bing Sentiments Based On My tweets")
+
+
+#Overall negative sentiments
+tfSentimentBing %>%
+  count(document, sentiment, wt = count) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  arrange(sentiment)
+```
+
+By looking at the bar chart, for words that appeared more than 15 times in my tweets, I generally have a lot more positive sentiment than negative sentiment. It's fairly amusing that my strongest negative sentiment term is bad and my strongest positive sentiment is good, though. Feels like my vocabulary is a bit reductionist and I should spice it up, but I had my experience in grad school and don't need to take the GRE again.
+
+#### nrc sentiments
+
+nrc labels things based on 10 different emotions: anger, anticipation, disgust, fear, joy, sadness, surprise, trust, negative, positive. We analyze this based on the tweets being considered without the modifications made to get the words to be considered individually.
+
+```{r, warning=FALSE}
+#Using nrc
+nrcAll <- colSums(get_nrc_sentiment(tweets))
+nrcNoRT <- colSums(get_nrc_sentiment(noRTs))
+#sentiments of all tweets
+nrcAll
+
+#sentiments of my written tweets
+nrcNoRT
+
+#sentiments of retweets
+nrcAll - nrcNoRT
+```
+
+We can see here that my strongest emotion is positive at 1187, and disgust is the lowest occurring sentiment at 348. The last line shows the sentiments of my retweets. Overall, my tweets do seem to focus more positively than negatively, though negative is the next strongest emotion nrc picks up on. Following that, I seem to be more trusting than anything else, which makes sense. I do like to have faith in the world, even if the news wants to convince me otherwise.
+
+### Latent Dirichlet Allocation (LDA)
+
+This method tries to find patterns of words together and groups them according to certain abstract "topics". The results are not consistent upon each run, so analyzing it is a pain, but you can see how the algorithm tries to classify the words in my tweets based on a topic the algorithm generates. Going forward, I probably won't use LDA as a classification method unless I believe the data can be more easily clustered.
+
+```{r, warning=FALSE}
+dtm_review <- tidytf %>%
+  count(term, document) %>%
+  cast_dtm(document, term, n) %>%
+  as.matrix() 
+lda_topics <- LDA(dtm_review, k = 2, method = "Gibbs", control = list(seed = 142)) %>%
+  tidy(matrix = "beta")
+word_probs <- lda_topics %>%
+  group_by(topic) %>%
+  top_n(15, beta) %>%
+  ungroup() %>%
+  mutate(term2 = fct_reorder(term, beta))
+ggplot(word_probs, aes(term2, beta, fill = as.factor(topic))) + geom_col(show.legend = FALSE) + facet_wrap(~ topic, scales = "free") + coord_flip()
+```
+
+## Conclusions
+
+Overall, I've certainly learned a lot about the way I've used Twitter in the past, and I'm happy to have done this analysis to better understand my social media habits over the last 10 years. I'd normally consider using n-grams to consider the correlation between words, but with the way that Twitter limits the amount of words in a tweet (and the relatively small amount of tweets that I have sent out), I think it would be pretty hard to get a meaningful result from doing so. In the future, I might try analyzing a different style of text data, such as a book or a TV script.
+
+Thank you for checking out this experiment into text analysis I've done!
