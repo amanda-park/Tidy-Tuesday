@@ -1,0 +1,183 @@
+---
+title: "Sentiment Analysis with Pokedex Data"
+author: "Amanda Park"
+date: "11/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(pacman)
+
+p_load(tidyverse,
+       tidytext,
+       ggplot2,
+       textdata,
+       wordcloud,
+       keras,
+       tokenizers,
+       purrr)
+
+setwd("C:/Users/youid/Dropbox/Professional/Pokemon")
+data <- read.csv("PokedexEntries.csv")
+data <- tibble(data[,-1])
+
+statsData <- read.csv("pokemonStats.csv")
+```
+
+## Cleaning Pokemon Stats Data
+
+```{r}
+statsData <- statsData %>%
+  select(name, generation, type1, type2) %>%
+  mutate(
+    grassType = as.factor(if_else(type1 == "grass", 1, if_else(type2 == "grass", 1, 0))),
+    normalType = as.factor(if_else(type1 == "normal", 1, if_else(type2 == "normal", 1, 0))),
+    fireType = as.factor(if_else(type1 == "fire", 1, if_else(type2 == "fire", 1, 0))),
+    waterType = as.factor(if_else(type1 == "water", 1, if_else(type2 == "water", 1, 0))),
+    groundType = as.factor(if_else(type1 == "ground", 1, if_else(type2 == "ground", 1, 0))),
+    rockType = as.factor(if_else(type1 == "rock", 1, if_else(type2 == "rock", 1, 0))),
+    iceType = as.factor(if_else(type1 == "ice", 1, if_else(type2 == "ice", 1, 0))),
+    electricType = as.factor(if_else(type1 == "electric", 1, if_else(type2 == "electric", 1, 0))),
+    psychicType = as.factor(if_else(type1 == "psychic", 1, if_else(type2 == "psychic", 1, 0))),
+    ghostType = as.factor(if_else(type1 == "ghost", 1, if_else(type2 == "ghost", 1, 0))),
+    darkType = as.factor(if_else(type1 == "dark", 1, if_else(type2 == "dark", 1, 0))),
+    fightingType = as.factor(if_else(type1 == "fighting", 1, if_else(type2 == "fighting", 1, 0))),
+    dragonType = as.factor(if_else(type1 == "dragon", 1, if_else(type2 == "dragon", 1, 0))),
+    fairyType = as.factor(if_else(type1 == "fairy", 1, if_else(type2 == "fairy", 1, 0))),
+    bugType = as.factor(if_else(type1 == "bug", 1, if_else(type2 == "bug", 1, 0))),
+    poisonType = as.factor(if_else(type1 == "poison", 1, if_else(type2 == "poison", 1, 0))),
+    flyingType = as.factor(if_else(type1 == "flying", 1, if_else(type2 == "flying", 1, 0))),
+    steelType = as.factor(if_else(type1 == "steel", 1, if_else(type2 == "steel", 1, 0)))
+    )
+
+
+
+```
+
+## Preparing Data for NLP Analysis
+
+* Apply stop words
+* No lemmatizing just yet
+
+```{r}
+#Load stopwords
+data(stop_words)
+
+#Create tidy data for analysis
+tidyData <- data %>% 
+  unnest_tokens(word, PokedexEntry) %>%
+  anti_join(stop_words)
+
+#Look at all Pokemon word frequency
+tidyData %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 200) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() + 
+  labs(y = NULL)
+
+#Look at specific Pokemon's word frequency
+tidyData %>%
+  filter(Pokemon == "Bulbasaur") %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 1) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() + 
+  labs(y = NULL)
+
+#Basic word cloud of all Pokemon entries
+tidyData %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+```
+
+## Sentiment Analysis using Bing
+
+Bing categorizes sentiment on a binary positive-negative scale.
+
+```{r}
+sentiment <- tidyData %>%
+  inner_join(get_sentiments("bing")) %>%
+  left_join(statsData, by = c("Pokemon" = "name")) 
+
+#Cleaning up generation variable
+sentiment$generation[is.na(sentiment$generation)] <- 8
+sentiment$generation <- as.factor(sentiment$generation)
+
+#Most common sentiment words
+wordCount <- sentiment %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup() 
+  
+#Plot of most common words with positive and negative sentiment
+wordCount %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+  
+
+#Plot of sentiment based on generation
+sentiment %>%
+  select(sentiment, generation) %>%
+  group_by(generation) %>%
+  count(sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  ggplot(aes(generation, sentiment, fill = generation)) +
+  geom_col() +
+  ggtitle("Sentiment of Pokedex Entries Across Generations") +
+  ylab("Generation") +
+  xlab("Sum of Sentiment")
+
+#Plot of sentiment across generations based on grass type
+sentiment %>%
+  select(sentiment, waterType, generation) %>%
+  filter(generation != 8) %>%
+  group_by(waterType, generation) %>%
+  count(sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  ggplot(aes(generation, sentiment, fill = waterType)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  ggtitle("Sentiment of Pokedex Entries Across Generations") +
+  ylab("Sentiment") +
+  xlab("Sum of Sentiment") 
+
+```
+
+## Sentiment Analysis using AFINN
+
+AFINN categorizes sentiment on a -5 to 5, as a way to catch the severity of sentiment a word may have associated with it.
+
+```{r}
+sentiment <- tidyData %>%
+  inner_join(get_sentiments("afinn")) %>%
+  left_join(statsData, by = c("Pokemon" = "name")) 
+
+#Cleaning up generation variable
+sentiment$generation[is.na(sentiment$generation)] <- 8
+sentiment$generation <- as.factor(sentiment$generation)
+
+#Plot of sentiment based on generation
+sentiment %>%
+  select(value, generation) %>%
+  group_by(generation) %>%
+  summarize(sentiment = sum(value)) %>%
+  ggplot(aes(generation, sentiment, fill = generation)) +
+  geom_col() +
+  ggtitle("Sentiment of Pokedex Entries Across Generations") +
+  ylab("Generation") +
+  xlab("Sum of Sentiment")
+```
+
+
