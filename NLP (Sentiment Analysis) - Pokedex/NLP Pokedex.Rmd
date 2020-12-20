@@ -17,7 +17,8 @@ p_load(tidyverse,
        wordcloud,
        keras,
        tokenizers,
-       purrr)
+       purrr,
+       plotly)
 
 setwd("C:/Users/youid/Dropbox/Professional/Pokemon")
 data <- read.csv("PokedexEntries.csv")
@@ -52,8 +53,31 @@ statsData <- statsData %>%
     steelType = as.factor(if_else(type1 == "steel", 1, if_else(type2 == "steel", 1, 0)))
     )
 
+#Radar chart of individual Pokemon's stats
 
+pkmnIndivData <- statsData %>%
+  filter(name == "Bulbasaur")
 
+fig <- plot_ly(
+  type = "scatterpolar",
+  r = c(pkmnIndivData$attack, pkmnIndivData$defense, pkmnIndivData$sp_attack,
+        pkmnIndivData$sp_defense, pkmnIndivData$speed, pkmnIndivData$attack),
+  theta = c("Attack", "Defense", "Special Attack",
+            "Special Defense", "Speed", "Attack"), 
+  fill = 'toself'
+) %>%
+  layout(
+   polar = list(
+     radialaxis = list(
+       visible = T,
+       range = c(0, 255)
+     )
+   ),
+   showlegend = F,
+   title = paste0("Bulbasaur Fighting Statistics")
+  )
+
+fig
 ```
 
 ## Preparing Data for NLP Analysis
