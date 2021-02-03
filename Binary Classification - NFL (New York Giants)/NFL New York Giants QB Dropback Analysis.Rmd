@@ -1,0 +1,220 @@
+---
+title: "NFL New York Giants - QB Dropback Classification Analysis"
+author: "Amanda Park"
+date: "2/3/2021"
+output: html_document
+---
+
+## Motivations Behind Analysis
+
+I am a lifelong New York Giants fan, and over the last few years of mediocrity have been a bit nostalgic for the golden days of when Tom Coughlin and Eli Manning were in their prime and Super Bowl winners. I wanted to see if there was a way to measure what encouraged the team to choose a running play vs a passing play, since watching sometimes the decision on run vs pass seemed to boggle my mind. 
+
+This was a useful reference in my analysis - check it out [here](https://www.opensourcefootball.com/posts/2020-09-07-estimating-runpass-tendencies-with-tidymodels-and-nflfastr/)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+set.seed(42)
+
+require(pacman)
+
+p_load(easytidymodels,
+       tidyverse,
+       recipes,
+       tidymodels,
+       nflfastR,
+       dlookr,
+       explore,
+       janitor)
+
+seasons <- 2004:2015
+
+dat <- purrr::map_df(seasons, function(x) {
+  readRDS(
+    url(
+      glue::glue("https://raw.githubusercontent.com/guga31bb/nflfastR-data/master/data/play_by_play_{x}.rds")
+    )
+  )
+})
+```
+
+## Filter Data to Focus on New York Giants Only (Tom Coughlin Era) And Prepare Data for Modelling
+
+```{r}
+nyDat <- dat %>%
+  clean_names() %>%
+  filter(home_team == "NYG" | away_team == "NYG")
+
+df <- nyDat %>%
+  filter(
+    down %in% c(1,2,3) & #First three downs only
+    !is.na(qb_dropback) & #Either yes/no for QB dropback
+    !is.na(score_differential)) %>% #Know the score differential
+  mutate(
+    qb_dropback = factor(qb_dropback),
+    qtr = factor(qtr, ordered = TRUE),
+    down = factor(down, ordered = TRUE),
+    off_timeout = if_else(posteam_type == "away", away_timeouts_remaining, home_timeouts_remaining),
+    def_timeout = if_else(posteam_type == "away", home_timeouts_remaining, away_timeouts_remaining)
+  ) %>%
+  dplyr::select(qb_dropback, down, ydstogo, yardline_100, score_differential, qtr, half_seconds_remaining, off_timeout, def_timeout)
+```
+
+# Prepare EasyTidyModels Components
+
+```{r}
+resp <- "qb_dropback"
+formula <- stats::as.formula(paste(resp, ".", sep="~"))
+
+datSplit <- initial_split(df, prop = .8)
+
+split <- trainTestSplit(df,
+                        stratifyOnResponse = TRUE,
+                        responseVar = resp)
+
+rec <- recipe(formula, data = split$train) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_nzv(all_predictors()) %>%
+  step_corr(all_numeric(), -all_outcomes(), threshold = .8) %>%
+  prep()
+
+train_df <- bake(rec, split$train)
+test_df <- bake(rec, split$test)
+
+folds <- cvFolds(train_df)
+```
+
+
+## Logistic Regression Model
+
+This model optimizes on balanced_accuracy by default.
+
+Testing model fit:
+* Accuracy is .65
+* Kappa is .29
+
+Very similar to the training model, so we are avoiding overfitting. However, the model fit is not that great. Try XGBoost to see if that approach works better.
+
+```{r}
+lr <- logRegBinary(recipe = rec,
+                   response = resp,
+                   folds = folds,
+                   train = train_df,
+                   test = test_df)
+
+#Confusion Matrix
+lr$trainConfMat
+
+#Plot of confusion matrix
+lr$trainConfMatPlot
+
+#Train Score
+lr$trainScore
+
+#Test Confusion Matrix
+lr$testConfMat
+
+#Test Confusion Matrix Plot
+lr$testConfMatPlot
+
+#Test Score
+lr$testScore
+```
+
+## XGBoost Model
+
+This model optimizes on balanced_accuracy by default.
+
+Testing model fit (default metrics):
+* Accuracy is .67
+* Kappa is .34
+
+Testing model fit (increase tree size to 1000 and grid to 15):
+* Accuracy is .68
+* Kappa is .35
+
+This model also avoids overfitting and does a better job than Logistic Regression did in classifying a QB dropback. However, the jump wasn't big, and trying to make the tuning process more robust by increasing the default trees (from 100 to 1000 in XGBoost and from 10 to 15 for the grid search) did not have much of an effect.
+
+```{r}
+
+xgClass <- xgBinaryClassif(
+                   grid = 15,
+                   recipe = rec,
+                   response = resp,
+                   folds = folds,
+                   train = train_df,
+                   test = test_df,
+                   evalMetric = "roc_auc",
+                   treeNum = 1000
+                   )
+
+#Visualize training data and its predictions
+xgClass$trainConfMat
+
+#View model metrics 
+xgClass$trainScore
+
+#Visualize testing data and its predictions
+xgClass$testConfMat
+
+#View model metrics 
+xgClass$testScore
+
+#See the final model chosen by svm based on optimizing for your chosen evaluation metric
+xgClass$final
+
+#See how model fit looks based on another evaluation metric
+xgClass$tune %>% tune::show_best("bal_accuracy")
+
+#Feature importance plot
+xgClass$featImpPlot
+
+#Feature importance variables
+xgClass$featImpVars
+
+#Visualize Tuned Metrics
+xgClass$tune %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  dplyr::select(mean, mtry:sample_size) %>%
+  pivot_longer(mtry:sample_size,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "AUC") +
+  theme_minimal()
+
+#Visualize ROC-AUC Curve
+final_mod <- last_fit(xgClass$final, datSplit)
+
+final_mod %>%
+  collect_predictions() %>%
+  roc_curve(qb_dropback, .pred_0) %>%
+  ggplot(aes(x = 1 - specificity, y = sensitivity)) +
+  geom_line(size = 1.5, color = "midnightblue") +
+  xlab("1 - Specificity") +
+  ylab("Sensitivity") +
+  geom_abline(
+    lty = 2, alpha = 0.5,
+    color = "gray50",
+    size = 1.2
+  ) +
+  ggtitle("ROC Curve") +
+  theme_minimal()
+
+
+
+```
+
+## Analysis 
+
+As expected, yards to go was the most important feature in the model to predict whether Eli would drop back on a pass. This makes sense, because rarely would the Giants in the Coughlin era call a running play when the yards to go was more than 10 yards.
+
+The second important feature was seconds in half. The Giants under Eli Manning were famously pretty prolific in the no-huddle and would regularly use that in the last two minutes of a half, especially if they were behind. 
+
+Following behind was score differential (passing more when behind) and whether or not it was a first down (passing more on first down).
+
+
