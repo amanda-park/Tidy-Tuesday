@@ -1,0 +1,105 @@
+---
+title: "Univariate Forecasting Example with ModelTime"
+author: "Amanda Park"
+date: "2/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(pacman)
+
+p_load(tidyverse,
+       modeltime,
+       tidymodels)
+
+source("ModelTimeFunctions.R")
+```
+
+This is more a demonstrative example for how to go about doing a univariate time series analysis. At least, it's a good place to start - after finding which models appear most effective you can feature engineer and tune the model to improve performance. Therefore, do not expect an exceptionally performing algorithm. This is basically Time Series EDA.
+
+Custom functions I created a while ago will be loaded in to expedite analysis.
+
+## Load in data and packages
+
+```{r}
+df <- read.csv("monthly-sunspots.csv")
+
+#Use stringr to fix dates
+df$Month <- df$Month %>%
+  str_c("-01") %>% 
+  as.Date()
+
+df <- df %>%
+   set_names("Date", "Value")
+
+resp <- "Value"
+pred <- "Date"
+
+split <- initial_time_split(df, prop = .9)
+tr <- training(split)
+ts <- testing(split)
+
+```
+
+## Get Initial Overview of Data
+
+The seasonality of the data appears pretty random, and the spikes don't seem to have any obvious time cadence to them. 
+
+The ACF and PACF show that there are significant lags in the data set that cyclically appear, even decades later.
+
+Overall, this data set is going to be difficult to predict the future on, even though we have a lot of data prior to rely on.
+
+```{r}
+init <- initialTimeSeriesEval(df = df)
+
+#Overview of time series with a trended line
+init$ts
+
+#See seasonality; only monthly is useful here because we're dealing with monthly data
+init$seasonality
+
+#See Autocorrelation Function and Partial Autocorrelation Function
+init$acf
+```
+
+## Fit a Bunch of Models
+
+The function modelTimeSeries fits a bunch of popular models (statistical and ML) and ranks them according to MASE. 
+
+Ensembling is also built-in, getting the benefits of multiple models in one output.
+
+Overall, in current state these models are not doing a good job at capturing the seasonality of this data. Feature engineering for additional variables (or experimenting with transformations on the response variable) will likely be necessary to improve this model's output.
+
+```{r}
+output <- modelTimeSeries(df = df)
+
+#Testing Data Accuracy
+output$accuracyTable
+
+#Cross Validation on Training Data
+output$crossValPlot
+
+#Top 6 models chosen
+output$forecastTable
+
+#Forecasts 7 months out (default can be changed via the days parameter)
+output$forecastPlot
+
+#Output of forecasts in tabular form
+output$forecastValues
+
+#Accuracy of Ensembled Models (Mean, Median, Weighted)
+output$accuracyEnsembleTable
+
+#Cross validation on Ensemble Models
+output$ensembleCrossValPlot
+
+#Tabular Output of Ensemble Models
+output$ensembleForecastValues
+
+#Plotly Output of Ensemble Models
+output$ensembleForecastPlot
+```
+
