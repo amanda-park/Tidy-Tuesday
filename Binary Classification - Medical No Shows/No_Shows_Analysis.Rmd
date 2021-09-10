@@ -1,0 +1,265 @@
+---
+title: "No-Shows Analysis"
+author: "Amanda Park"
+date: "9/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+## Always set a seed for reproducible results
+set.seed(42)
+
+## Quickly standardize variable names
+library(janitor)
+
+## Loads dplyr, tidyr, ggplot, and other useful R libraries for data cleaning
+library(tidyverse)
+library(lubridate)
+
+## Dlookr allows for quick EDA of datasets
+library(dlookr)
+
+## Loads Cramer's V library, gives idea what to expect to be correlated categorically
+library(creditmodel)
+
+## R's version of scikit-learn, basically; machine learning one stop shop
+library(tidymodels)
+tidymodels_prefer()
+
+## Detect variable importance 
+library(vip)
+```
+
+## Which Patients are Repeat-No Shows? (If Any)
+
+Report findings of patients that have repeated no-shows on record to operating unit. According to analysis, over 3000 patients were determined to have at least 1 no-show on record.
+
+```{r echo = FALSE}
+orig_df <- read_csv("Medical_No_Shows.csv") %>% 
+  clean_names()
+
+#Are all appointment ID's unique? Yes
+orig_df %>%
+  group_by(appointment_id) %>%
+  tally() %>%
+  nrow()
+
+#Are all patient ID's unique? No
+orig_df %>%
+  group_by(patient_id) %>%
+  tally() %>%
+  nrow()
+
+#List of patients that are repeat offenders/no-shows, potentially can provide this to care management team as having no-showed repeatedly
+repeat_patients <- orig_df %>%
+  filter(no_show == "Yes") %>%
+  group_by(patient_id) %>%
+  tally() %>%
+  filter(n > 1) %>%
+  arrange(desc(n))
+
+repeat_patient_vector <- repeat_patients %>% 
+  select(patient_id) %>% 
+  pull()
+
+repeat_patient_df <- orig_df %>%
+  filter(patient_id %in% repeat_patient_vector)
+
+#diagnose_web_report(repeat_patient_df, output_format = 'html')
+```
+
+## Load Data and Clean
+
+```{r}
+df <- orig_df %>%
+  mutate(scheduled_day = date(scheduled_day),
+         appointment_day = date(appointment_day)) %>%
+  mutate_if(is.numeric, as.factor) %>%
+  mutate_if(is.character, as.factor) %>%
+  mutate(age = as.numeric(age)) %>%
+  mutate(days_between_schedule_and_appt = as.numeric(
+           difftime(appointment_day, scheduled_day, units= 'days')
+           )
+         ) 
+
+#Look a premade web report that can point out obvious data flaws
+#Time between appts indicates some negative values worth investigating
+# diagnose_web_report(df, output_format = 'html')
+
+#Remove variables not needed for analysis
+#Remove patients with negative time between scheduled and actual appointment
+#If this happened on the job I'd investigate with expert on how data is collected and point out this discrepancy
+df <- df %>% 
+  select(-patient_id, -appointment_id, -scheduled_day, -appointment_day) %>%
+  filter(days_between_schedule_and_appt > -1) 
+
+#Detect association between categorical variables via Cramer's V
+#SMS received has strongest correlation at ~.127, which isn't great
+#Location ID might have promise after clustering similar locations together
+creditmodel::char_cor(df %>% select_all(as.factor))
+
+```
+
+## Build Predictive Model
+
+What I would do if I had more time:
+* Cluster different location IDs together using an unsupervised approach such as DBScan, or use known information about the locations to self-create clusters of data (ie, all buildings in the same county) to try and reduce dimensionality
+
+```{r}
+#Define your response variable for analysis
+resp <- "no_show"
+
+#Create a formula object regressing your response against your predictors
+formula <- stats::as.formula(paste(resp, ".", sep="~"))
+
+# Split between training and testing data, stratifying based on response variable
+df_split <- initial_split(df, 
+                          prop = .75, 
+                          strata = !!resp, 
+                          breaks = 4)
+
+df_train <- training(df_split)
+df_test <- testing(df_split)
+
+# Use recipes to preprocess dataset for analysis
+rec <- recipe(formula, data = df) %>%
+  #Turns infrequent outcomes to "other"
+  step_other(all_nominal(), threshold = .001) %>%
+  #Removes variables with near-zero variance
+  step_nzv(all_nominal()) %>%
+  #Normalizes numeric predictors
+  step_normalize(all_numeric_predictors()) %>%
+  #Finalize recipe and data manipulations
+  prep()
+
+#Preprocess training and testing data
+train_df_bake <- bake(rec, df_train)
+test_df_bake <- bake(rec, df_test)
+
+# Set up 5-fold cross-validation
+folds <- vfold_cv(train_df_bake, v = 5, strata = !!resp)
+
+#Build LASSO logistic regression model with tuned penalty and mixture components
+lr_mod <- parsnip::logistic_reg(penalty = tune(), mixture = 1) %>%
+    parsnip::set_engine("glmnet") %>%
+    parsnip::set_mode("classification")
+
+#Create a grid to tune parameters in LR model
+grid <- dials::grid_regular(dials::parameters(lr_mod), levels = 10)
+
+#Create a workflow and apply model and formula 
+wflow <- workflows::workflow() %>%
+    workflows::add_model(lr_mod) %>%
+    workflows::add_formula(formula)
+
+#Tune model with 5-fold cross-validation across relevant classification performance metrics
+tune <- tune::tune_grid(
+      wflow,
+      resamples = folds,
+      grid      = grid,
+      metrics   = yardstick::metric_set(
+        yardstick::bal_accuracy,
+        yardstick::sensitivity,
+        yardstick::roc_auc,
+        yardstick::precision,
+        yardstick::recall),
+      control   = tune::control_grid(verbose = TRUE,
+                                     save_pred = TRUE,
+                                     save_workflow = TRUE,
+                                     allow_par = TRUE, 
+                                     parallel_over = "everything")
+    )
+
+#Show models that performed the best
+show_best(tune, metric = "bal_accuracy")
+
+#See how metrics performed
+autoplot(tune)
+
+#Select best model
+best <- tune::select_best(tune, "bal_accuracy")
+
+#Finalize model
+final <- tune::finalize_workflow(
+  wflow,
+  best
+)
+
+#Validate training data performance in detail
+trainPred <- final %>%
+  parsnip::fit(
+    data = train_df_bake
+  ) %>%
+  stats::predict(new_data = train_df_bake) %>%
+  dplyr::bind_cols(train_df_bake)
+
+trainScore <- trainPred %>%
+  yardstick::metrics(!!resp, .pred_class) %>%
+  mutate(.estimate = format(round(.estimate, 2), big.mark = ","))
+
+trainConfMat <- trainPred %>%
+  yardstick::conf_mat(truth = !!resp, estimate = .pred_class)
+
+#Visualize testing data performance in detail
+testPred <- final %>%
+  parsnip::fit(
+    data = train_df_bake
+  ) %>%
+  stats::predict(new_data = test_df_bake) %>%
+  dplyr::bind_cols(test_df_bake)
+
+testScore <- testPred %>%
+  yardstick::metrics(!!resp, .pred_class) %>%
+  mutate(.estimate = format(round(.estimate, 2), big.mark = ","))
+
+testConfMat <- testPred %>%
+  yardstick::conf_mat(truth = !!resp, estimate = .pred_class)
+
+#Visualize variable importance for 20 most important variables
+vip <- final %>%
+  fit(train_df_bake) %>%
+  extract_fit_parsnip() %>%
+  vip::vi(lambda = best$penalty) %>%
+  mutate(
+    Importance = abs(Importance),
+    Variable = fct_reorder(Variable, Importance)
+  ) %>%
+  arrange(desc(Importance)) %>%
+  head(20) %>%
+  ggplot(aes(x = Importance, y = Variable, fill = Sign)) +
+  geom_col() +
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(y = NULL, title = "Variable Importance Plot for No-Show Model")
+
+vip
+```
+
+### Evaluating Significant Variables from Model Output
+
+```{r}
+#How days between appointment is affected by no-shows
+df %>%
+  group_by(no_show) %>%
+  summarize(n = n(), 
+            avg_day_between_appt = mean(days_between_schedule_and_appt)) %>%
+  mutate(pct = n/sum(n))
+
+
+#How SMS received affects no-shows
+df %>%
+  group_by(no_show, sms_received) %>%
+  summarize(n = n(), 
+            avg_day_between_appt = mean(days_between_schedule_and_appt)) %>%
+  mutate(pct = n/sum(n))
+
+#How location ID 75 affects no-show
+df %>%
+  filter(location_id == 75) %>%
+  group_by(no_show) %>%
+  summarize(n = n(), 
+            avg_day_between_appt = mean(days_between_schedule_and_appt)) %>%
+  mutate(pct = n/sum(n))
+
+```
