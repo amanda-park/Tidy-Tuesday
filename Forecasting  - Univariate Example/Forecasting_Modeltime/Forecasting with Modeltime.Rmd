@@ -12,7 +12,10 @@ require(pacman)
 
 p_load(tidyverse,
        modeltime,
-       tidymodels)
+       tidymodels,
+       timetk,
+       thief,
+       earth)
 
 source("ModelTimeFunctions.R")
 ```
@@ -66,17 +69,17 @@ init$acf
 
 ## Fit a Bunch of Models
 
-The function modelTimeSeries fits a bunch of popular models (statistical and ML) and ranks them according to MASE. 
+The function modeltime_forecast_series fits a bunch of popular models (statistical and ML) and ranks them according to MASE. 
 
 Ensembling is also built-in, getting the benefits of multiple models in one output.
 
 Overall, in current state these models are not doing a good job at capturing the seasonality of this data. Feature engineering for additional variables (or experimenting with transformations on the response variable) will likely be necessary to improve this model's output.
 
 ```{r}
-output <- modelTimeSeries(df = df)
+output <- modeltime_forecast_series(df = df)
 
 #Testing Data Accuracy
-output$accuracyTable
+output$accuracy_table
 
 #Cross Validation on Training Data
 output$crossValPlot
