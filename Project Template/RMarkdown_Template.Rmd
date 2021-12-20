@@ -1,0 +1,124 @@
+---
+title: "Analysis Template"
+author: "Amanda Park"
+date: "7/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+
+## Always set a seed for reproducible results
+set.seed(420)
+
+## Database connection
+library(RODBC)
+
+## Quickly standardize variable names
+library(janitor)
+
+## Loads dplyr, tidyr, ggplot, and other useful R libraries for data cleaning
+library(tidyverse)
+
+## Custom R package for exploratory data analysis and creating pretty plots
+#remotes::install_github('amanda-park/reasyeda')
+library(reasyeda)
+
+## R's version of scikit-learn, basically; machine learning one stop shop
+library(tidymodels)
+tidymodels_prefer()
+
+## Custom R package for simplifying the tidymodels process
+# remotes::install_github('amanda-park/easytidymodels')
+# library(easytidymodels)
+
+## Parallel computing can help analyses run faster, if you have the cores on your computer to spare
+library(doParallel)
+cores <- parallel::detectCores(logical = FALSE)
+registerDoParallel(cores = cores)
+```
+
+## Load Data From Query
+
+Add password if connection is secure, etc.
+
+```{r}
+con <- odbcConnect(dsn = "insert DSN here")
+qry <- read_file("Queries/Your_SQL_Query_Here.sql")
+df <- sqlQuery(con,qry) %>% clean_names()
+```
+
+## Define Important Variables Here!
+
+These will make your code more reproducible:
+
+```{r}
+#Define your response variable for analysis
+resp <- "Sale_Price"
+
+#Create a formula object regressing your response against your predictors
+formula <- stats::as.formula(paste(resp, ".", sep="~"))
+```
+
+## Exploratory Data Analysis
+
+shinyEDA (from reasyeda) allows you to check your data's distributions, correlations, and numeric transformations, all in one Shiny app.
+
+```{r}
+shinyEDA(df)
+```
+
+## Data Preprocessing
+
+### Remove Variables and Observations With a High Percentage of NAs
+
+```{r}
+df <- df[which(rowMeans(!is.na(df)) > 0.3), which(colMeans(!is.na(df)) > 0.3)]
+```
+
+
+### Simple Training and Testing Split
+
+```{r}
+# Choose this function if your data is not time dependent
+df_split <- initial_split(data, 
+                          prop = .75, 
+                          strata = NULL, 
+                          breaks = 4)
+
+## Choose this if your data is time dependent!
+# df_split <- initial_time_split(data, 
+#                                prop = .75, 
+#                                lag = 0)
+
+df_train <- training(df_split)
+df_test <- training(df_split)
+```
+
+### Bootstrap Sampling
+
+```{r}
+resample <- bootstraps(df, 
+                       times = 100,
+                       strata = NULL,
+                       apparent = TRUE)
+```
+
+### Recipes
+
+Recipes simplify data preprocessing
+
+```{r}
+rec <- recipe(formula, data = df) %>%
+  step_nzv(all_predictors()) %>%
+  step_other(all_nominal(), threshold = .01) %>%
+  step_unknown(all_predictors()) %>%
+  step_dummy(all_nominal()) %>%
+  step_corr(threshold = .9) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  prep()
+
+train_df_bake <- bake(train_df)
+test_df_bake <- bake(test_df)
+```
+

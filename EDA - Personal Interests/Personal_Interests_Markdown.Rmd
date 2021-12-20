@@ -1,0 +1,117 @@
+---
+title: "Personal Interests Analysis"
+author: "Amanda Park"
+date: "12/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+
+set.seed(42)
+
+## Quickly standardize variable names
+library(janitor)
+
+## Loads dplyr, tidyr, ggplot, and other useful R libraries for data cleaning
+library(tidyverse)
+
+## Tidyverse package for analyzing Google Sheets Data
+library(googlesheets4)
+
+#gs4_auth() #run this to authorize access to Google Sheets
+
+df <- read_sheet(
+  ss = "https://docs.google.com/spreadsheets/d/10mO7gj-mPfyU0FjJRSyg78ubj078YpLrkDsZ3I7XQqI/edit#gid=300308603",
+  sheet = "Personality_Test_Data") %>%
+  mutate(
+    Metric = as.factor(Metric),
+    Score_Type = as.factor(Score_Type),
+    Test = as.factor(Test),
+    Domain = as.factor(Domain),
+    Date_Taken = as.Date(Date_Taken))
+```
+
+## Big 5 Survey Results
+
+The score measures 5 aspects of personality based on defined domains.
+
+The **Agreeableness** scale refers to how people tend to treat others in relationships. People's agreeableness ranges from more competitive, straightforward and cold to more unselfish, warm and helpful.
+
+The **Conscientousness** scale measures the tendency to control impulses and facilitate goal-directed behavior. People's conscientiousness ranges from more spontaneous and impulsive to more self-disciplined and persistent.
+
+The **Extroversion** scale concerns how sociable and outgoing people are. Those with higher results draw energy from or recharge by interacting with others, while those with lower results get tired when interacting with others.
+
+The **Neuroticism** scale measures confidence, general temperament and being comfortable in one’s own skin. People’s emotional stability ranges from very emotionally sensitive and tense to very confident and sure of themselves.
+
+The **Open-Mindedness** scale concerns people's willingness to try new things and their capability to think outside the box. People's openness ranges from very traditional and conventional to very curious, daring and innovative.
+
+```{r}
+df %>%
+  filter(Test == "Big 5") %>%
+  ggplot(aes(x = Date_Taken, y = Score, color = Metric)) + 
+  geom_smooth(se = FALSE) +
+  facet_wrap(~Metric) +
+  labs(title = "Big 5 Survey Results Over Time",
+       subtitle = "Using LOESS Curves; 2016 - 2021",
+       x = "",
+       y = "Percentile") +
+  theme(legend.position = "none")+
+  aes(ymin = 0, ymax = 100)
+```
+
+## HEXACO Score Changes
+
+### Honesty-Humility
+
+The **Sincerity** scale assesses a tendency to be genuine in interpersonal relations. Low scorers will flatter others or pretend to like them in order to obtain favors, whereas high scorers are unwilling to manipulate others.
+
+The **Fairness** scale assesses a tendency to avoid fraud and corruption. Low scorers are willing to gain by cheating or stealing, whereas high scorers are unwilling to take advantage of other individuals or of society at large.
+
+The **Greed Avoidance** scale assesses a tendency to be uninterested in possessing lavish wealth, luxury goods, and signs of high social status. Low scorers want to enjoy and to display wealth and privilege, whereas high scorers are not especially motivated by monetary or social-status considerations.
+
+The **Modesty** scale assesses a tendency to be modest and unassuming. Low scorers consider themselves as superior and as entitled to privileges that others do not have, whereas high scorers view themselves as ordinary people without any claim to special treatment.
+
+```{r}
+#HEXACO Honesty-Humility
+df %>%
+  filter(Test == "HEXACO", 
+         Domain == "Honesty-Humility") %>%
+  ggplot(aes(x = Date_Taken, y = Score, color = Metric)) +
+  geom_line() +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  facet_wrap(~Metric) +
+  labs(title = "HEXACO Honesty-Humility Scores",
+       subtitle = "Using LOESS Curves; 2020 - 2021",
+       x = "Year",
+       y = "5-Point Scale") +
+  theme(legend.position = "none") +
+  aes(ymin = 1, ymax = 5)
+```
+
+### Emotionality
+
+The **Fearfulness** scale assesses a tendency to experience fear. Low scorers feel little fear of injury and are relatively tough, brave, and insensitive to physical pain, whereas high scorers are strongly inclined to avoid physical harm.
+
+The **Anxiety** scale assesses a tendency to worry in a variety of contexts. Low scorers feel little stress in response to difficulties, whereas high scorers tend to become preoccupied even by relatively minor problems.
+
+The **Dependence** scale assesses one's need for emotional support from others. Low scorers feel self-assured and able to deal with problems without any help or advice, whereas high scorers want to share their difficulties with those who will provide encouragement and comfort.
+
+The **Sentimentality** scale assesses a tendency to feel strong emotional bonds with others. Low scorers feel little emotion when saying good-bye or in reaction to the concerns of others, whereas high scorers feel strong emotional attachments and an empathic sensitivity to the feelings of others.
+
+```{r}
+#HEXACO Emotionality
+df %>%
+  filter(Test == "HEXACO", 
+         Domain == "Emotionality") %>%
+  ggplot(aes(x = Date_Taken, y = Score, color = Metric)) +
+  geom_line() +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  facet_wrap(~Metric) +
+  labs(title = "HEXACO Emotionality Scores",
+       subtitle = "Using LOESS Curves; 2020 - 2021",
+       x = "Year",
+       y = "5-Point Scale") +
+  theme(legend.position = "none") +
+  aes(ymin = 1, ymax = 5)
+```
