@@ -1,0 +1,102 @@
+---
+title: "Admissions Forecasting"
+author: "Amanda Park"
+date: "9/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+
+set.seed(42)
+
+# Import required packages
+# Shiny and extension packages
+library(shiny)
+library(shinydashboard)
+library(shinyWidgets)
+library(shinydashboardPlus)
+
+## Tidyverse and Tidymodels
+library(tidyverse)
+library(lubridate)
+library(tidymodels)
+
+## Pretty / interactive tables
+library(kableExtra)
+library(DT)
+library(rmarkdown)
+
+## Data visualization 
+library(plotly)
+library(ggthemes)
+
+## Anomaly detection
+require(anomalize)
+require(tibbletime)
+require(timetk)
+library(modeltime)
+library(modeltime.ensemble)
+library(bayesmodels)
+library(forecast)
+
+## Prophet time series forecasting
+require(prophet)
+
+## Load in preprocessed data frame and functions
+df <- readRDS("df_admissions.Rds")
+source("admissions_forecasting_functions.R")
+
+## Define cutoffs for monthly and weekly forecasting of data
+month_date_cutoff <- as.character(cut(Sys.Date(), "month"))
+month_date_cutoff_floor <- as.character(cut(min(df$date), "month"))
+week_date_cutoff <- as.character(cut(Sys.Date() - 5, "week", right = FALSE))
+week_date_cutoff_floor <- as.character(cut(min(df$date), "week", right = TRUE))
+```
+
+## Using ModelTime Func to Build Forecasts
+
+```{r}
+df <- df %>%
+  filter(
+    !is.na(hosp_location),
+     is_ip_admit == 1,
+     date < "2021-11-01"
+    ) 
+
+resp <- "Value"
+pred <- "Date"
+period <- 28
+
+###Add ability to adjust based on forecast granularity - year/month/week/day/etc. Right now recipe does not do this so the forecast can end up very janky
+
+daily_ip_admits_by_hosp <- ensemble_forecasts_grouped(
+  data = df,
+  date_group = date,
+  var = hosp_location)
+
+bw_daily_plot <- forecast_plot(
+  tail(daily_ip_admits_by_hosp$Butterworth$ensemble_forecast, 90),
+  "Forecasted IP Daily Admits for Butterworth Hospital")
+
+bl_daily_plot <- forecast_plot(
+  tail(daily_ip_admits_by_hosp$Blodgett$ensemble_forecast, 90),
+  "Forecasted IP Daily Admits for Blodgett")
+
+hdvch_daily_plot <- forecast_plot(
+  tail(daily_ip_admits_by_hosp$HDVCH$ensemble_forecast, 90),
+  "Forecasted IP Daily Admits for HDVCH")
+
+reg_daily_plot <- forecast_plot(
+  tail(daily_ip_admits_by_hosp$Regionals$ensemble_forecast, 90),
+  "Forecasted IP Daily Admits for Regionals")
+
+bw_daily_plot
+bl_daily_plot
+hdvch_daily_plot
+reg_daily_plot
+#saveRDS(test_output, file = "hosp_ed_ensemble_fcast.Rds")
+```
+
+
+
